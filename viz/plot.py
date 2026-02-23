@@ -1,14 +1,14 @@
 """
-plot.py — Visualise 2D embedding projections.
+plot.py — Visualise 2D and 3D embedding projections.
 
-Two flavours:
-    matplotlib: static, good for saving to PNG / embedding in notebooks
-    plotly:     interactive — hover to see labels, zoom, pan in the browser
+Three flavours:
+    plot_matplotlib:  static 2D, good for saving to PNG / embedding in notebooks
+    plot_plotly:      interactive 2D — hover to see labels, zoom, pan in the browser
+    plot_plotly_3d:   interactive 3D — rotate, zoom, hover in the browser
 
-Both accept the same inputs:
-    coords : np.ndarray (n, 2)   — 2D coordinates from reduce.py
-    labels : list[str]           — text label for each point
-    groups : list[str] | None    — optional category for colour-coding
+2D functions expect coords of shape (n, 2).
+3D function expects coords of shape (n, 3).
+All accept the same labels / groups arguments.
 
 Colour-coding by group is the key insight for understanding embeddings:
     if words from the same semantic category (animals, countries, etc.)
@@ -152,5 +152,77 @@ def plot_plotly(
         xaxis=dict(title="Component 1", showgrid=True, gridwidth=0.5, gridcolor="#eee"),
         yaxis=dict(title="Component 2", showgrid=True, gridwidth=0.5, gridcolor="#eee"),
         plot_bgcolor="white",
+    )
+    fig.show()
+
+
+# ---------------------------------------------------------------------------
+# Plotly 3D (interactive, rotatable)
+# ---------------------------------------------------------------------------
+
+def plot_plotly_3d(
+    coords:  np.ndarray,
+    labels:  list[str],
+    title:   str                  = "Embedding Space",
+    groups:  Optional[list[str]] = None,
+    width:   int                  = 1100,
+    height:  int                  = 800,
+) -> None:
+    """
+    Rotatable 3D scatter plot in the browser.
+
+    Features:
+        - Click and drag to rotate the point cloud
+        - Scroll to zoom
+        - Hover over a point to see its label and group
+        - Click legend items to hide/show groups
+
+    Args:
+        coords:  (n, 3) array of 3D coordinates
+        labels:  Text label for each point
+        title:   Plot title
+        groups:  Category string for each point (colour coding)
+    """
+    fig = go.Figure()
+
+    if groups is not None:
+        unique_groups = sorted(set(groups))
+        for group in unique_groups:
+            mask = [i for i, g in enumerate(groups) if g == group]
+            fig.add_trace(go.Scatter3d(
+                x=coords[mask, 0],
+                y=coords[mask, 1],
+                z=coords[mask, 2],
+                mode="markers+text",
+                name=group,
+                text=[labels[i] for i in mask],
+                textposition="top center",
+                marker=dict(size=5),
+                hovertemplate="<b>%{text}</b><br>group: " + group + "<extra></extra>",
+            ))
+    else:
+        fig.add_trace(go.Scatter3d(
+            x=coords[:, 0],
+            y=coords[:, 1],
+            z=coords[:, 2],
+            mode="markers+text",
+            text=labels,
+            textposition="top center",
+            marker=dict(size=5),
+            hovertemplate="<b>%{text}</b><extra></extra>",
+        ))
+
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=16)),
+        width=width,
+        height=height,
+        scene=dict(
+            xaxis_title="Component 1",
+            yaxis_title="Component 2",
+            zaxis_title="Component 3",
+            xaxis=dict(showgrid=True, gridcolor="#ddd"),
+            yaxis=dict(showgrid=True, gridcolor="#ddd"),
+            zaxis=dict(showgrid=True, gridcolor="#ddd"),
+        ),
     )
     fig.show()

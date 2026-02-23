@@ -117,6 +117,92 @@ You should see five colour-coded clusters: animals, countries, royalty, technolo
 
 ---
 
+## CLI — add, search, and visualize from the terminal
+
+The `vdb` command lets you build and query a database without writing any Python. The database persists to disk (`.vdb/` by default) between calls, so you can build it up incrementally.
+
+### Add words
+
+```bash
+# Add individual words or multi-word phrases
+uv run vdb add cat dog wolf lion tiger bear --group animals
+uv run vdb add france germany japan italy --group countries
+uv run vdb add "machine learning" "neural network" "deep learning" --group ai
+
+# --group is optional; it controls the colour in viz and appears in search results
+uv run vdb add sunrise sunset twilight
+```
+
+### Search
+
+```bash
+# Find the 5 nearest neighbors (default)
+uv run vdb search "big cat"
+
+# Return more results
+uv run vdb search "artificial intelligence" --top-k 10
+```
+
+Example output:
+
+```
+         Nearest to "big cat"
+┏━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━━┓
+┃ Rank   ┃ Word  ┃ Score  ┃ Group   ┃
+┡━━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━━━┩
+│ 1      │ cat   │ 0.7745 │ animals │
+│ 2      │ dog   │ 0.4805 │ animals │
+│ 3      │ tiger │ 0.4721 │ animals │
+│ 4      │ lion  │ 0.4711 │ animals │
+│ 5      │ bear  │ 0.3958 │ animals │
+└────────┴───────┴────────┴─────────┘
+```
+
+### List all stored words
+
+```bash
+uv run vdb list
+```
+
+### Visualize
+
+```bash
+# Static matplotlib plot (opens a window)
+uv run vdb viz
+
+# Interactive Plotly chart in the browser (hover, zoom, toggle groups)
+uv run vdb viz --interactive
+
+# Save to a PNG file instead of displaying
+uv run vdb viz --save plot.png
+
+# Use PCA instead of t-SNE (faster, better for small word sets)
+uv run vdb viz --method pca
+```
+
+### Clear the database
+
+```bash
+uv run vdb clear
+```
+
+### Options
+
+```
+--db <path>        Database directory (default: .vdb)
+--embedder         pretrained | word2vec  — chosen once at DB creation (default: pretrained)
+--model <path>     Path to Word2Vec checkpoint (when using --embedder word2vec)
+```
+
+To maintain multiple separate databases, use `--db`:
+
+```bash
+uv run vdb --db animals.vdb add cat dog wolf --group animals
+uv run vdb --db places.vdb add paris london tokyo --group cities
+```
+
+---
+
 ## Training Word2Vec from scratch
 
 ### Step 1 — Download the corpus
@@ -218,7 +304,11 @@ for r in db.search("king", top_k=3):
 
 Note: Word2Vec only knows words it saw during training. Unknown words (OOV) return zero vectors and will score 0.0. If a word you care about is missing, retrain with more tokens (`--max-tokens 5000000`) or a lower `--min-count`.
 
-### Command-line search demo
+### Command-line search
+
+Use the `vdb` CLI to add words and search without writing Python — see the [CLI section](#cli--add-search-and-visualize-from-the-terminal) above.
+
+To explore the built-in word cluster demo:
 
 ```bash
 # Pretrained model

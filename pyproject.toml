@@ -31,3 +31,5 @@ packages = ["core", "training", "viz", "examples"]
 [project.scripts]
 # Run as: uv run train-word2vec
 train-word2vec = "training.trainer:main"
+# Run as: uv run vdb <command>
+vdb = "cli:main"

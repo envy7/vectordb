@@ -21,3 +21,7 @@ data/corpus.txt
 # Saved DB snapshots
 *.npy
 metadata.json
+
+# vdb CLI database directories
+.vdb/
+*.vdb/

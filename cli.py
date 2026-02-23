@@ -248,6 +248,165 @@ def cmd_viz(args):
         )
 
 
+def cmd_graph(args):
+    _require_db(args.db)
+    db, config = _open_db(args.db, args)
+
+    if db._hnsw is None:
+        rprint("[red]No HNSW index found. Run 'vdb index' first.[/red]")
+        return
+
+    hnsw = db._hnsw
+    n = len(hnsw._vectors)
+
+    if n > args.max_nodes:
+        rprint(
+            f"[red]Too many nodes ({n}) to render clearly. "
+            f"Cap is {args.max_nodes}. Use --max-nodes N to raise it.[/red]"
+        )
+        return
+
+    if n < 2:
+        rprint("[yellow]Need at least 2 nodes to visualize.[/yellow]")
+        return
+
+    import numpy as np
+    import plotly.graph_objects as go
+    from sklearn.decomposition import PCA
+
+    records = db.storage.get_records()
+    labels = [r.text for r in records]
+    groups = [r.metadata.get("group", "custom") for r in records]
+
+    # PCA to 2D — every layer uses the same X/Y so nodes stack vertically
+    vectors = np.array(hnsw._vectors)
+    coords = PCA(n_components=2, random_state=42).fit_transform(vectors)
+
+    n_layers = hnsw._max_layer + 1
+    unique_groups = sorted(set(groups))
+    palette = [
+        "#636EFA", "#EF553B", "#00CC96", "#AB63FA", "#FFA15A",
+        "#19D3F3", "#FF6692", "#B6E880", "#FF97FF", "#FECB52",
+    ]
+    group_color = {g: palette[i % len(palette)] for i, g in enumerate(unique_groups)}
+
+    fig = go.Figure()
+
+    # ── 1. Within-layer edges ───────────────────────────────────────────
+    for layer_idx in range(n_layers):
+        layer_graph = hnsw._layers[layer_idx]
+        edge_x, edge_y, edge_z = [], [], []
+        seen: set[tuple[int, int]] = set()
+
+        for nid, neighbors in layer_graph.items():
+            for nb in neighbors:
+                key = (min(nid, nb), max(nid, nb))
+                if key in seen:
+                    continue
+                seen.add(key)
+                edge_x += [coords[nid, 0], coords[nb, 0], None]
+                edge_y += [coords[nid, 1], coords[nb, 1], None]
+                edge_z += [layer_idx,      layer_idx,     None]
+
+        if edge_x:
+            fig.add_trace(go.Scatter3d(
+                x=edge_x, y=edge_y, z=edge_z,
+                mode="lines",
+                line=dict(width=1.5, color="rgba(160,160,160,0.35)"),
+                hoverinfo="none",
+                showlegend=False,
+            ))
+
+    # ── 2. Inter-layer edges (same node present in multiple layers) ─────
+    inter_x, inter_y, inter_z = [], [], []
+    for nid in range(n):
+        node_layers = [l for l in range(n_layers) if nid in hnsw._layers[l]]
+        for i in range(len(node_layers) - 1):
+            la, lb = node_layers[i], node_layers[i + 1]
+            inter_x += [coords[nid, 0], coords[nid, 0], None]
+            inter_y += [coords[nid, 1], coords[nid, 1], None]
+            inter_z += [la,             lb,             None]
+
+    if inter_x:
+        fig.add_trace(go.Scatter3d(
+            x=inter_x, y=inter_y, z=inter_z,
+            mode="lines",
+            name="Inter-layer links",
+            line=dict(width=3, color="rgba(255,140,0,0.75)"),
+            hoverinfo="none",
+        ))
+
+    # ── 3. Nodes per layer, colored by group ────────────────────────────
+    for layer_idx in range(n_layers):
+        layer_graph = hnsw._layers[layer_idx]
+        nodes_in_layer = list(layer_graph.keys())
+        if not nodes_in_layer:
+            continue
+
+        for group in unique_groups:
+            group_nodes = [nid for nid in nodes_in_layer if groups[nid] == group]
+            if not group_nodes:
+                continue
+
+            fig.add_trace(go.Scatter3d(
+                x=[coords[nid, 0] for nid in group_nodes],
+                y=[coords[nid, 1] for nid in group_nodes],
+                z=[layer_idx]      * len(group_nodes),
+                mode="markers+text",
+                # Only show legend entry once (at layer 0)
+                name=group,
+                showlegend=(layer_idx == 0),
+                legendgroup=group,
+                text=[labels[nid] for nid in group_nodes],
+                textposition="top center",
+                textfont=dict(size=9),
+                marker=dict(
+                    size=7,
+                    color=group_color[group],
+                    opacity=0.9,
+                    line=dict(width=1, color="white"),
+                ),
+                hovertemplate=(
+                    "<b>%{text}</b><br>"
+                    "layer: " + str(layer_idx) + "<br>"
+                    "group: " + group +
+                    "<extra></extra>"
+                ),
+            ))
+
+    fig.update_layout(
+        title=dict(
+            text=(
+                f"HNSW Graph — {n} nodes · "
+                f"{n_layers} layer{'s' if n_layers != 1 else ''} · "
+                f"M={hnsw.M}"
+            ),
+            font=dict(size=16),
+        ),
+        width=1200,
+        height=850,
+        scene=dict(
+            xaxis_title="PCA 1",
+            yaxis_title="PCA 2",
+            zaxis=dict(
+                title="Layer",
+                tickmode="array",
+                tickvals=list(range(n_layers)),
+                ticktext=[f"Layer {i}" for i in range(n_layers)],
+            ),
+            xaxis=dict(showgrid=True, gridcolor="#ddd"),
+            yaxis=dict(showgrid=True, gridcolor="#ddd"),
+        ),
+        legend=dict(title="Group", itemsizing="constant"),
+    )
+
+    rprint(
+        f"[cyan]Rendering HNSW graph:[/cyan] {n} nodes across {n_layers} layers "
+        f"(gray = within-layer edges, orange = inter-layer links)"
+    )
+    fig.show()
+
+
 def cmd_clear(args):
     import shutil
 
@@ -360,6 +519,15 @@ Examples:
         help="Candidate list size during build — higher = better graph, slower build (default: 200)",
     )
 
+    # graph
+    p_graph = sub.add_parser(
+        "graph", help="Visualize the HNSW graph structure in 3D (requires vdb index)"
+    )
+    p_graph.add_argument(
+        "--max-nodes", type=int, default=100, dest="max_nodes",
+        help="Refuse to render if the DB has more nodes than this (default: 100)",
+    )
+
     # clear
     sub.add_parser("clear", help="Delete all words from the database")
 
@@ -371,6 +539,7 @@ Examples:
         "list":   cmd_list,
         "viz":    cmd_viz,
         "index":  cmd_index,
+        "graph":  cmd_graph,
         "clear":  cmd_clear,
     }[args.command](args)
 

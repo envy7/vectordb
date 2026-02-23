@@ -180,6 +180,21 @@ uv run vdb viz --save plot.png
 uv run vdb viz --method pca
 ```
 
+### Visualize the HNSW graph
+
+```bash
+# Build the index first, then render the graph in 3D (opens in browser)
+uv run vdb index
+uv run vdb graph
+
+# Raise the node cap if needed (default 100)
+uv run vdb graph --max-nodes 200
+```
+
+The graph shows each HNSW layer as a separate floor. Gray lines are within-layer edges between similar nodes. Orange vertical lines connect the same node across layers — these are the "highway" nodes that searches use to zoom in quickly before dropping to the base layer.
+
+![HNSW Graph](hnsw_graph.png)
+
 ### Clear the database
 
 ```bash

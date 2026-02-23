@@ -146,11 +146,12 @@ def cmd_search(args):
         rprint("[yellow]Database is empty. Use 'vdb add' to add words.[/yellow]")
         return
 
+    algo = "HNSW" if db.using_hnsw else "brute force"
     top_k = min(args.top_k, len(db))
-    results = db.search(args.query, top_k=top_k)
+    results = db.search(args.query, top_k=top_k, ef=args.ef)
 
     table = Table(
-        title=f'Nearest to "[bold]{args.query}[/bold]"',
+        title=f'Nearest to "[bold]{args.query}[/bold]"  [dim]({algo})[/dim]',
         show_header=True,
         header_style="bold cyan",
     )
@@ -164,6 +165,26 @@ def cmd_search(args):
         table.add_row(str(r.rank), r.record.text, f"{r.score:.4f}", group)
 
     rprint(table)
+
+
+def cmd_index(args):
+    _require_db(args.db)
+    db, config = _open_db(args.db, args)
+
+    if len(db) == 0:
+        rprint("[yellow]Database is empty. Add words first with 'vdb add'.[/yellow]")
+        return
+
+    db.build_index(M=args.M, ef_construction=args.ef_construction)
+
+    import io, contextlib
+    with contextlib.redirect_stdout(io.StringIO()):
+        db.save(args.db)
+
+    rprint(
+        f"[green]HNSW index saved.[/green] "
+        f"Future searches will use approximate search instead of brute force."
+    )
 
 
 def cmd_list(args):
@@ -302,6 +323,10 @@ Examples:
         "--top-k", type=int, default=5, dest="top_k",
         help="Number of results to show (default: 5)",
     )
+    p_search.add_argument(
+        "--ef", type=int, default=50,
+        help="HNSW search candidate list size — higher = better recall, slower (default: 50)",
+    )
 
     # list
     sub.add_parser("list", help="List all words currently in the database")
@@ -322,6 +347,19 @@ Examples:
     )
     p_viz.add_argument("--save", default=None, help="Save the plot to a PNG file (2D only)")
 
+    # index
+    p_index = sub.add_parser(
+        "index", help="Build an HNSW index for fast approximate search"
+    )
+    p_index.add_argument(
+        "--M", type=int, default=16,
+        help="Connections per node per layer — higher = better recall, more memory (default: 16)",
+    )
+    p_index.add_argument(
+        "--ef-construction", type=int, default=200, dest="ef_construction",
+        help="Candidate list size during build — higher = better graph, slower build (default: 200)",
+    )
+
     # clear
     sub.add_parser("clear", help="Delete all words from the database")
 
@@ -332,6 +370,7 @@ Examples:
         "search": cmd_search,
         "list":   cmd_list,
         "viz":    cmd_viz,
+        "index":  cmd_index,
         "clear":  cmd_clear,
     }[args.command](args)
 

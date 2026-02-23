@@ -16,7 +16,10 @@ injection). Swapping the embedding model is a one-line change:
 Everything else (add, search, save, load) stays identical.
 """
 
+import os
+
 from .embeddings.base import BaseEmbedder
+from .hnsw import HNSWIndex
 from .search import SearchResult, brute_force_search
 from .storage import VectorRecord, VectorStorage
 
@@ -42,6 +45,7 @@ class VectorDB:
     def __init__(self, embedder: BaseEmbedder):
         self.embedder = embedder
         self.storage = VectorStorage()
+        self._hnsw: HNSWIndex | None = None  # built on demand via build_index()
 
     # ------------------------------------------------------------------
     # Inserting data
@@ -64,6 +68,8 @@ class VectorDB:
             metadata=metadata or {},
         )
         self.storage.add(record)
+        if self._hnsw is not None:
+            self._hnsw.add(vector)
 
     def add_batch(self, items: list[dict]) -> None:
         """
@@ -93,27 +99,67 @@ class VectorDB:
                 metadata=item.get("metadata", {}),
             )
             self.storage.add(record)
+            if self._hnsw is not None:
+                self._hnsw.add(vector)
 
     # ------------------------------------------------------------------
     # Querying
     # ------------------------------------------------------------------
 
-    def search(self, query: str, top_k: int = 5) -> list[SearchResult]:
+    def search(self, query: str, top_k: int = 5, ef: int = 50) -> list[SearchResult]:
         """
         Find the top_k most similar items to the query text.
 
-        The query goes through the same embedder as the stored items —
-        this is important. You can't mix vectors from different models.
+        Uses HNSW approximate search if an index has been built (via
+        build_index()), otherwise falls back to exact brute-force search.
 
         Args:
             query:  Natural language query (or a word, phrase, sentence)
             top_k:  How many results to return
+            ef:     HNSW search-time candidate list size (ignored for brute
+                    force). Higher = better recall, slower. Default 50.
 
         Returns:
             List of SearchResult objects sorted by descending cosine similarity.
         """
         query_vector = self.embedder.embed(query)
+
+        if self._hnsw is not None:
+            hits = self._hnsw.search(query_vector, k=top_k, ef=ef)
+            records = self.storage.get_records()
+            return [
+                SearchResult(record=records[nid], score=sim, rank=rank + 1)
+                for rank, (sim, nid) in enumerate(hits)
+            ]
+
         return brute_force_search(query_vector, self.storage, top_k)
+
+    def build_index(self, M: int = 16, ef_construction: int = 200) -> None:
+        """
+        Build an HNSW index over all currently stored vectors.
+
+        After calling this, search() will use approximate HNSW search
+        instead of brute-force. New vectors added via add() / add_batch()
+        are automatically inserted into the index.
+
+        Args:
+            M:               Connections per node per layer. Higher = better
+                             recall but more memory. Default 16.
+            ef_construction: Candidate list size during build. Higher = better
+                             graph quality but slower build. Default 200.
+        """
+        records = self.storage.get_records()
+        if not records:
+            return
+
+        print(f"Building HNSW index over {len(records)} vectors "
+              f"(M={M}, ef_construction={ef_construction})...")
+
+        self._hnsw = HNSWIndex(M=M, ef_construction=ef_construction)
+        for record in records:
+            self._hnsw.add(record.vector)
+
+        print(f"Index built. Layers: {self._hnsw._max_layer + 1}")
 
     def search_by_vector(self, vector, top_k: int = 5) -> list[SearchResult]:
         """
@@ -128,12 +174,23 @@ class VectorDB:
     # ------------------------------------------------------------------
 
     def save(self, directory: str) -> None:
-        """Save all vectors and metadata to disk."""
+        """Save vectors, metadata, and HNSW index (if built) to disk."""
         self.storage.save(directory)
+        if self._hnsw is not None:
+            self._hnsw.save(directory)
 
     def load(self, directory: str) -> None:
-        """Load vectors and metadata from a previously saved directory."""
+        """Load vectors, metadata, and HNSW index (if present) from disk."""
         self.storage = VectorStorage.load(directory)
+        hnsw_path = os.path.join(directory, "hnsw.json")
+        if os.path.exists(hnsw_path):
+            vectors = list(self.storage.get_matrix())
+            self._hnsw = HNSWIndex.load(directory, vectors)
+
+    @property
+    def using_hnsw(self) -> bool:
+        """True if an HNSW index is active."""
+        return self._hnsw is not None
 
     # ------------------------------------------------------------------
     # Introspection
